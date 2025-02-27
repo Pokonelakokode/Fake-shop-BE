@@ -24,22 +24,86 @@ export class GenerativeAIService {
 
   public async generateText(prompt: string): Promise<string> {
     try {
-      const result = await this.model.generateContent([prompt]);
+      const chat = this.model.startChat();
+      const result = await chat.sendMessage(prompt);
       const calls = result.response.functionCalls();
       console.log('Function calls:', calls);
       if (calls) {
-        const callResults = [];
-        for (const call of calls) {
-          switch (call.name) {
-            case 'getProducts':
-              const { page, limit } = call.args as { page: number, limit: number };
-              const products = await this.productService.getProducts(page, limit);
-              callResults.push(products);
-              break;
-          }
+        // Define types for function call results
+        type FunctionCallResponse = {
+          name: string;
+          response: any;
+        };
+
+        type FunctionCallError = {
+          name: string;
+          error: string;
+        };
+
+        type FunctionCallResult = FunctionCallResponse | FunctionCallError;
+
+        // Create an array of promises, each returning an object with name and result
+        const callPromises = calls.map(call => {
+          return (async () => {
+            try {
+              switch (call.name) {
+                case 'getProducts':
+                  const { page, limit } = call.args as { page: number, limit: number };
+                  const products = await this.productService.getProducts(page, limit);
+                  return { name: call.name, response: products };
+                  
+                case 'getProductById':
+                  const { id: productId } = call.args as { id: number };
+                  const product = await this.productService.getProductById(productId);
+                  return { name: call.name, response: product };
+                  
+                case 'createProduct':
+                  const { productData: newProductData } = call.args as { productData: Partial<Product> };
+                  const newProduct = await this.productService.createProduct(newProductData);
+                  return { name: call.name, response: newProduct };
+                  
+                case 'updateProduct':
+                  const { id: updateId, productData: updateData } = call.args as { id: number, productData: Partial<Product> };
+                  const updatedProduct = await this.productService.updateProduct(updateId, updateData);
+                  return { name: call.name, response: updatedProduct };
+                  
+                case 'deleteProduct':
+                  const { id: deleteId } = call.args as { id: number };
+                  const deleteResult = await this.productService.deleteProduct(deleteId);
+                  return { name: call.name, response: deleteResult };
+                  
+                case 'searchProducts':
+                  const { query, page: searchPage, limit: searchLimit } = call.args as { query: string, page: number, limit: number };
+                  const searchResults = await this.productService.searchProducts(query, searchPage, searchLimit);
+                  return { name: call.name, response: searchResults };
+
+                default:
+                  return { name: call.name, error: 'Unknown function call' };
+              }
+            } catch (error) {
+              return { name: call.name, error: String(error) };
+            }
+          })();
+        });
+
+        // Wait for all promises to resolve
+        const allResults = await Promise.all<FunctionCallResult>(callPromises);
+
+        // Filter out results with errors
+        const validCallResults = allResults.filter(
+          (result): result is FunctionCallResponse => !('error' in result)
+        );
+
+        // Only send response if we have valid results
+        if (validCallResults.length > 0) {
+            await chat.sendMessage(validCallResults.map(result => ({functionResponse: {name: result.name, response: result.response}})));
         }
-      } 
-      return result.response.text();
+
+        // Return only the valid results
+        return JSON.stringify(validCallResults);
+      } else {
+        return result.response.text();
+      }
     } catch (error) {
       console.error('Error generating text:', error);
       throw error;
