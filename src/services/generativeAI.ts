@@ -1,4 +1,4 @@
-import { GenerativeModel, GoogleGenerativeAI } from '@google/generative-ai';
+import { FunctionDeclaration, GenerativeModel, GoogleGenerativeAI, SchemaType, Tool } from '@google/generative-ai';
 import { config } from 'dotenv';
 import { DataSource, Repository } from 'typeorm';
 import { Product } from '../entity/Product';
@@ -17,12 +17,28 @@ export class GenerativeAIService {
   constructor(private dataSource: DataSource) {
     const genAI = new GoogleGenerativeAI(apiKey!);
     this.productService = new ProductService(dataSource);
-    this.model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    this.model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash", 
+      tools: [{functionDeclarations: this.getProductFunctionDeclarations()}] });
   }
 
   public async generateText(prompt: string): Promise<string> {
     try {
       const result = await this.model.generateContent([prompt]);
+      const calls = result.response.functionCalls();
+      console.log('Function calls:', calls);
+      if (calls) {
+        const callResults = [];
+        for (const call of calls) {
+          switch (call.name) {
+            case 'getProducts':
+              const { page, limit } = call.args as { page: number, limit: number };
+              const products = await this.productService.getProducts(page, limit);
+              callResults.push(products);
+              break;
+          }
+        }
+      } 
       return result.response.text();
     } catch (error) {
       console.error('Error generating text:', error);
@@ -31,16 +47,16 @@ export class GenerativeAIService {
   }
 
   // New method: returns Gemini API function call declarations for ProductService functions
-  public getProductFunctionDeclarations() {
+  public getProductFunctionDeclarations(): FunctionDeclaration[] {
     return [
       {
         name: 'getProducts',
         description: 'Retrieve a paginated list of products.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            page: { type: 'number', description: 'Page number.' },
-            limit: { type: 'number', description: 'Number of products per page.' }
+            page: { type: SchemaType.INTEGER, description: 'Page number.' },
+            limit: { type: SchemaType.INTEGER, description: 'Number of products per page.' }
           },
           required: ['page', 'limit']
         }
@@ -49,9 +65,9 @@ export class GenerativeAIService {
         name: 'getProductById',
         description: 'Get a product by its ID.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            id: { type: 'number', description: 'Product id.' }
+            id: { type: SchemaType.INTEGER, description: 'Product id.' }
           },
           required: ['id']
         }
@@ -60,9 +76,17 @@ export class GenerativeAIService {
         name: 'createProduct',
         description: 'Create a new product.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            productData: { type: 'object', description: 'Partial product object.' }
+            productData: { 
+              type: SchemaType.OBJECT, 
+              description: 'Partial product object.',
+              properties: {
+                name: { type: SchemaType.STRING, description: 'Product name' },
+                description: { type: SchemaType.STRING, description: 'Product description' },
+                price: { type: SchemaType.NUMBER, description: 'Product price' }
+              }
+             }
           },
           required: ['productData']
         }
@@ -71,10 +95,20 @@ export class GenerativeAIService {
         name: 'updateProduct',
         description: 'Update an existing product.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            id: { type: 'number', description: 'Product id.' },
-            productData: { type: 'object', description: 'Partial product object containing update data.' }
+            id: { type: SchemaType.INTEGER, description: 'Product id.' },
+            productData: { 
+              type: SchemaType.OBJECT, 
+              description: 'Partial product object containing update data.',
+              properties: {
+                // Define the properties of productData here
+                // Example:
+                name: { type: SchemaType.STRING, description: 'Product name' },
+                description: { type: SchemaType.STRING, description: 'Product description' },
+                price: { type: SchemaType.NUMBER, description: 'Product price' }
+              }
+            }
           },
           required: ['id', 'productData']
         }
@@ -83,9 +117,9 @@ export class GenerativeAIService {
         name: 'deleteProduct',
         description: 'Delete a product by its ID.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            id: { type: 'number', description: 'Product id.' }
+            id: { type: SchemaType.INTEGER, description: 'Product id.' }
           },
           required: ['id']
         }
@@ -94,11 +128,11 @@ export class GenerativeAIService {
         name: 'searchProducts',
         description: 'Search products by a query with pagination.',
         parameters: {
-          type: 'object',
+          type: SchemaType.OBJECT,
           properties: {
-            query: { type: 'string', description: 'Search query.' },
-            page: { type: 'number', description: 'Page number.' },
-            limit: { type: 'number', description: 'Number of products per page.' }
+            query: { type: SchemaType.STRING, description: 'Search query.' },
+            page: { type: SchemaType.INTEGER, description: 'Page number.' },
+            limit: { type: SchemaType.INTEGER, description: 'Number of products per page.' }
           },
           required: ['query', 'page', 'limit']
         }
